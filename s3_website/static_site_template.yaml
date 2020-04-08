@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Host website stored in S3
+Metadata:
+  Authors:
+    Description: Giorgio Carta
+Mappings:
+  EnvironmentMap:
+    Staging:
+      InstanceType: t2.nano
+      EnvironmentName: Staging
+    Testing:
+      InstanceType: t2.nano
+      EnvironmentName: Testing
+    Production:
+      InstanceType: t2.small
+      EnvironmentName: Production
+Parameters:
+  VPC:
+    Description: The id of the VPC
+    Type: AWS::EC2::VPC::Id
+    AllowedPattern: "^(vpc-)([a-z0-9]{8}|[a-z0-9]{17})$"
+  #  KeyPair:
+  #    Description: A ssh key pair
+  #    Type: AWS::EC2::KeyPair::KeyName
+  Subnet:
+    Description: A public subnet to use
+    Type: AWS::EC2::Subnet::Id
+  Environment:
+    Description: The environment into which deploy the EC2 instance; used to assign tags
+      to resources and define EC2 instance type
+    Type: String
+    AllowedValues:
+      - Staging
+      - Testing
+      - Production
+    Default: Staging
+Resources:
+  EC2ReadFromS3InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref ReadFromS3Role
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-034d940df32c75d15
+      IamInstanceProfile: !Ref EC2ReadFromS3InstanceProfile
+      InstanceType:
+        Fn::FindInMap:
+          - EnvironmentMap
+          - !Ref Environment
+          - InstanceType
+      #      KeyName:
+      #        !Ref KeyPair
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref SecurityGroup
+          SubnetId:
+            !Ref Subnet
+      UserData:
+        Fn::Base64:
+          Fn::Join:
+            - "\n"
+            - - "#! /bin/bash"
+              - sudo yum -y update
+              - sudo yum install httpd -y
+              - aws s3 cp s3://gcdataset/tokyo.zip .
+              - unzip tokyo.zip -d /var/www/html/
+              - service httpd start
+      Tags:
+        - Key: Name
+          Value: s3-site-host
+        - Key: Environment
+          Value:
+            Fn::FindInMap:
+              - EnvironmentMap
+              - Ref: Environment
+              - EnvironmentName
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: http-traffic
+      VpcId: !Ref VPC
+      SecurityGroupEgress: []
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+        - CidrIp: 0.0.0.0/0
+          FromPort: 443
+          IpProtocol: tcp
+          ToPort: 443
+      Tags:
+        - Key: Name
+          Value: HTTP traffic
+        - Key: Environment
+          Value:
+            Fn::FindInMap:
+              - EnvironmentMap
+              - !Ref Environment
+              - EnvironmentName
+  ReadFromS3Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: ReadFromS3
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:Get*"
+                  - "s3:List*"
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: EC2ReadPermissionInS3
+        - Key: Environment
+          Value:
+            Fn::FindInMap:
+              - EnvironmentMap
+              - !Ref Environment
+              - EnvironmentName
+Outputs:
+  HostPublicIp:
+    Description: The public IP address of the server
+    Value:
+      Fn::GetAtt:
+        - EC2Instance
+        - PublicIp
+  HostPrivateIp:
+    Description: The Private DNS Name of the server
+    Value:
+      Fn::GetAtt:
+        - EC2Instance
+        - PublicDnsName
