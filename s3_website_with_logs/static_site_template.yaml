@@ -1,0 +1,171 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Host website stored in S3
+Metadata:
+  Authors:
+    Description: Giorgio Carta
+Mappings:
+  EnvironmentMap:
+    Staging:
+      InstanceType: t2.nano
+      EnvironmentName: Staging
+      AMI: ami-06ce3edf0cff21f07
+    Testing:
+      InstanceType: t2.nano
+      EnvironmentName: Testing
+      AMI: ami-06ce3edf0cff21f07
+    Production:
+      InstanceType: t2.small
+      EnvironmentName: Production
+      AMI: ami-06ce3edf0cff21f07
+Parameters:
+  VPC:
+    Description: The id of the VPC
+    Type: AWS::EC2::VPC::Id
+    AllowedPattern: "^(vpc-)([a-z0-9]{8}|[a-z0-9]{17})$"
+  KeyPair:
+    Description: A ssh key pair
+    Type: AWS::EC2::KeyPair::KeyName
+  Subnet:
+    Description: A public subnet to use
+    Type: AWS::EC2::Subnet::Id
+  Environment:
+    Description: The environment into which deploy the EC2 instance; used to assign tags
+      to resources and define EC2 instance type
+    Type: String
+    AllowedValues:
+      - Staging
+      - Testing
+      - Production
+    Default: Staging
+Resources:
+  EC2ReadFromS3InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref ReadFromS3RoleAndCloudWatch
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId:
+        Fn::FindInMap:
+          - EnvironmentMap
+          - !Ref Environment
+          - AMI
+      IamInstanceProfile: !Ref EC2ReadFromS3InstanceProfile
+      InstanceType:
+        Fn::FindInMap:
+          - EnvironmentMap
+          - !Ref Environment
+          - InstanceType
+      KeyName:
+        !Ref KeyPair
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref SecurityGroup
+          SubnetId:
+            !Ref Subnet
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash -ex
+            sudo yum -y update
+            sudo yum install -y awslogs
+            sudo yum -y install jq
+            region=`curl http://169.254.169.254/latest/dynamic/instance-identity/document | jq -r .region`
+            sudo sed -i "s/region =.*/region = $region /" /etc/awslogs/awscli.conf
+            sudo aws s3 cp s3://gcdataset/httpd.conf /etc/httpd/conf/httpd.conf
+            sudo aws s3 cp s3://gcdataset/access_log.conf - >> /etc/awslogs/awslogs.conf
+            sudo yum install httpd -y
+            aws s3 cp s3://gcdataset/tokyo.zip .
+            unzip tokyo.zip -d /var/www/html/
+            sudo systemctl start awslogsd
+            service httpd start
+      Tags:
+        - Key: Name
+          Value: s3-site-host
+        - Key: Environment
+          Value:
+            Fn::FindInMap:
+              - EnvironmentMap
+              - Ref: Environment
+              - EnvironmentName
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: http-ssh-traffic
+      VpcId: !Ref VPC
+      SecurityGroupEgress: []
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+        - CidrIp: 0.0.0.0/0
+          FromPort: 443
+          IpProtocol: tcp
+          ToPort: 443
+        - CidrIp: 0.0.0.0/0
+          FromPort: 22
+          IpProtocol: tcp
+          ToPort: 22
+      Tags:
+        - Key: Name
+          Value: HTTP traffic
+        - Key: Environment
+          Value:
+            Fn::FindInMap:
+              - EnvironmentMap
+              - !Ref Environment
+              - EnvironmentName
+  ReadFromS3RoleAndCloudWatch:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: ReadFromS3AndCloudWatchLogs
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:Get*"
+                  - "s3:List*"
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "logs:DescribeLogStreams"
+                Resource: "*"
+      Tags:
+        - Key: Name
+          Value: EC2ReadS3AndCloudWatchLogs
+        - Key: Environment
+          Value:
+            Fn::FindInMap:
+              - EnvironmentMap
+              - !Ref Environment
+              - EnvironmentName
+Outputs:
+  HostPublicIp:
+    Description: The public IP address of the server
+    Value:
+      Fn::GetAtt:
+        - EC2Instance
+        - PublicIp
+  HostPrivateIp:
+    Description: The Private DNS Name of the server
+    Value:
+      Fn::GetAtt:
+        - EC2Instance
+        - PublicDnsName
