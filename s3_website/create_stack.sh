@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # crate a stack on AWS
-aws --profile giorgio2 cloudformation create-stack \
+aws --profile <YOUR PROFILE> cloudformation create-stack \
  --capabilities CAPABILITY_IAM \
  --stack-name static-website \
  --template-body file://static_site_template.yaml \

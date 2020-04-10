@@ -8,12 +8,15 @@ Mappings:
     Staging:
       InstanceType: t2.nano
       EnvironmentName: Staging
+      AMI: ami-06ce3edf0cff21f07
     Testing:
       InstanceType: t2.nano
       EnvironmentName: Testing
+      AMI: ami-06ce3edf0cff21f07
     Production:
       InstanceType: t2.small
       EnvironmentName: Production
+      AMI: ami-06ce3edf0cff21f07
 Parameters:
   VPC:
     Description: The id of the VPC
@@ -44,7 +47,11 @@ Resources:
   EC2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      ImageId: ami-034d940df32c75d15
+      ImageId:
+        Fn::FindInMap:
+          - EnvironmentMap
+          - !Ref Environment
+          - AMI
       IamInstanceProfile: !Ref EC2ReadFromS3InstanceProfile
       InstanceType:
         Fn::FindInMap:
@@ -62,14 +69,13 @@ Resources:
             !Ref Subnet
       UserData:
         Fn::Base64:
-          Fn::Join:
-            - "\n"
-            - - "#! /bin/bash"
-              - sudo yum -y update
-              - sudo yum install httpd -y
-              - aws s3 cp s3://gcdataset/tokyo.zip .
-              - unzip tokyo.zip -d /var/www/html/
-              - service httpd start
+          !Sub |
+            #! /bin/bash
+            sudo yum -y update
+            sudo yum install httpd -y
+            aws s3 cp s3://gcdataset/tokyo.zip .
+            unzip tokyo.zip -d /var/www/html/
+            service httpd start
       Tags:
         - Key: Name
           Value: s3-site-host
