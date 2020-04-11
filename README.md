@@ -27,4 +27,7 @@ Attached to the Ec2 instance, the template defines:
  
  SSH connection is allowed, but requires an SSH key.
  
+ ## /ec2_with_ebs_volume
  
+Example of a EC2 instance with a EBS volume attached, formatted and mounted 
+in a `/data` folder of the instance.

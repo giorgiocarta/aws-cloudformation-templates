@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: A EC2 instance with SSH access and EBS volume
+Metadata:
+  Authors:
+    Description: Giorgio Carta
+Parameters:
+  VPC:
+    Description: The id of the VPC
+    Type: AWS::EC2::VPC::Id
+    AllowedPattern: "^(vpc-)([a-z0-9]{8}|[a-z0-9]{17})$"
+  KeyPair:
+    Description: A ssh key pair
+    Type: AWS::EC2::KeyPair::KeyName
+  AZ:
+    Description: A public subnet to use
+    Type: String
+Resources:
+  EC2Instance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      AvailabilityZone: !Ref AZ
+      ImageId: ami-06ce3edf0cff21f07
+      InstanceType: t2.nano
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref SecurityGroup
+      KeyName:
+        !Ref KeyPair
+      Volumes:
+        - Device: "/dev/sdf"
+          VolumeId: !Ref EbsVolume
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #! /bin/bash
+          sudo yum -y update
+          echo "check if the volume is visible..."
+          lsblk
+          echo "create local mount point..."
+          mkdir data
+          echo "create ext4 filesystem..."
+          sudo mkfs.ext4 -q -F /dev/sdf
+          echo "mount ebs volume locally..."
+          sudo mount /dev/sdf /data
+          echo "display filesystem disk space usage..."
+          df -h
+          echo "done!"
+  EbsVolume:
+    Type: "AWS::EC2::Volume"
+    DeletionPolicy: Snapshot
+    Properties:
+      AvailabilityZone: !Ref AZ
+      Encrypted: False
+      Size: 30
+      VolumeType: gp2
+      Tags:
+        - Key: Name
+          Value: MyInstanceVolume
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ssh-traffic
+      VpcId: !Ref VPC
+      SecurityGroupEgress: []
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 22
+          IpProtocol: tcp
+          ToPort: 22
+      Tags:
+        - Key: Name
+          Value: SSH traffic
