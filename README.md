@@ -31,3 +31,8 @@ Attached to the Ec2 instance, the template defines:
  
 Example of a EC2 instance with a EBS volume attached, formatted and mounted 
 in a `/data` folder of the instance.
+
+
+## EC2 instance with EBS volume and lifecycle policy for backup
+
+Creates an EC2 instance with an EBS volume attached, and a 24 hours snapshot policy.
