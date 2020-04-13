@@ -1,7 +1,7 @@
 # aws-cloudformation-templates
 
 
-## /static_site
+## /s3_website
 
 Quick example on how to publish a site hosted on S3 onto a 
 EC2 instance.
@@ -27,12 +27,17 @@ Attached to the Ec2 instance, the template defines:
  
  SSH connection is allowed, but requires an SSH key.
  
- ## /ec2_with_ebs_volume
+## /ec2_with_ebs_volume
  
 Example of a EC2 instance with a EBS volume attached, formatted and mounted 
 in a `/data` folder of the instance.
 
 
-## EC2 instance with EBS volume and lifecycle policy for backup
+## /ec2_ebs_volume_with_backup
 
+EC2 instance with EBS volume and lifecycle policy for backup
 Creates an EC2 instance with an EBS volume attached, and a 24 hours snapshot policy.
+
+## /s3_static_website
+
+Use S3 to host a simple static website.
