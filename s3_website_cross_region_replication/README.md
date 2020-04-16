@@ -12,12 +12,10 @@ editing the template.yaml
 
 ## Project setup
 
-Install install a 3.7 virtual env, and install requirements:
+Cd into this folder and install a 3.7 virtual env:
 
 ```bash
 python3.7 -m venv .venv
-source ./venv/bin/activate
-cd replica-bucket
 pip install -r ./crate_bucket/requirements.txt
 pip install -e .
 
