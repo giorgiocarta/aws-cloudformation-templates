@@ -41,3 +41,5 @@ Creates an EC2 instance with an EBS volume attached, and a 24 hours snapshot pol
 ## /s3_static_website
 
 Use S3 to host a simple static website.
+
+## 
