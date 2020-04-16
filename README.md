@@ -42,4 +42,6 @@ Creates an EC2 instance with an EBS volume attached, and a 24 hours snapshot pol
 
 Use S3 to host a simple static website.
 
-## 
+## s3_cross_region_replication
+
+Create a main bucket and a replication bucket into another region for replication.
