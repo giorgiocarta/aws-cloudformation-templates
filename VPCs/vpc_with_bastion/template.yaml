@@ -1,0 +1,377 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Cloud formation template to create custom VPC; it create a VCP with public and private subnets"
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  VPCName:
+    # ALL RESOURCES SHOULD HAVE A TAG WITH THIS STRING
+    Description: "The name of the VPC being created."
+    Type: String
+    Default: "VPC Public and Private with NAT"
+  Environment:
+    # ALL RESOURCES SHOULD HAVE A TAG WITH THIS STRING
+    Description: "The environment into which deploy the bastion; used to assign tags
+      to resources and define EC2 instance type. E.g., STAGING, or PRODUCTION etc."
+    Type: String
+  BastionKeyPair:
+    Description: "A ssh key pair to be used with the bastion host"
+    Type: 'AWS::EC2::KeyPair::KeyName'
+Mappings:
+  SubnetConfig:
+    VPC:
+      # 65536 hosts available
+      CIDR: "10.0.0.0/16"
+    Public:
+      # of which 256 public
+      CIDR: "10.0.10.0/24"
+    Private:
+      # first 256 private
+      CIDR: "10.0.20.0/24"
+Resources:
+  CustomVPC:
+    Type: "AWS::EC2::VPC"
+    Description: "CUSTOM VPC - Includes a private and a public subnet"
+    Properties:
+      EnableDnsSupport: "true"
+      EnableDnsHostnames: "true"
+      CidrBlock:
+        Fn::FindInMap:
+          - "SubnetConfig"
+          - "VPC"
+          - "CIDR"
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Ref VPCName
+        - Key: "Environment"
+          Value: !Ref 'Environment'
+  PublicSubnetA:
+    Type: "AWS::EC2::Subnet"
+    Description: "Public VPC subnet. Access the internet through a IGW"
+    Properties:
+      AvailabilityZone: "eu-west-1a"
+      CidrBlock:
+        Fn::FindInMap:
+          - "SubnetConfig"
+          - "Public"
+          - "CIDR"
+      VpcId: !Ref 'CustomVPC'
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - !Ref "VPCName"
+              - 'PUBLIC SUBNET'
+        - Key: "Environment"
+          Value:
+            !Ref "Environment"
+  PrivateSubnetB:
+    Type: "AWS::EC2::Subnet"
+    Description: "Private VPC subnet. Only access the internet through a net gateway."
+    Properties:
+      MapPublicIpOnLaunch: false
+      AvailabilityZone: "eu-west-1b"
+      CidrBlock:
+        Fn::FindInMap:
+          - "SubnetConfig"
+          - "Private"
+          - "CIDR"
+      VpcId: !Ref 'CustomVPC'
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - 'PRIVATE SUBNET'
+              - !Ref "VPCName"
+        - Key: "Environment"
+          Value:
+            !Ref "Environment"
+  # --- public subnet settings --- #
+  InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Description: "IGW used by the public subnet to connect to the internet"
+    Properties:
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - !Ref "VPCName"
+              - "IGW"
+        - Key: "Environment"
+          Value:
+            !Ref "Environment"
+  IGWAttachmentToVPC:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Description: "Attach the IGW to gateway to Public Subnet (A)"
+    Properties:
+      VpcId: !Ref CustomVPC
+      InternetGatewayId: !Ref InternetGateway
+  PublicRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Description: "Custom table to Allow connection to/from the internet for the public subnet"
+    Properties:
+      VpcId:
+        Ref: "CustomVPC"
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - 'PUBLIC ROUTE'
+              - !Ref "VPCName"
+        - Key: "Environment"
+          Value:
+            !Ref "Environment"
+  PublicRoute:
+    Type: "AWS::EC2::Route"
+    Description: "Allows connection to/from the internet for the public subnet"
+    DependsOn: IGWAttachmentToVPC
+    Properties:
+      RouteTableId:
+        Ref: "PublicRouteTable"
+      # redirect all traffic to igw
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId:
+        Ref: "InternetGateway"
+  PublicSubnetRouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Description: "Associates route table to public subnet"
+    Properties:
+      SubnetId: !Ref PublicSubnetA
+      RouteTableId: !Ref PublicRouteTable
+  # --- private subnets settings --- #
+  PrivateRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref CustomVPC
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - 'PRIVATE ROUTE TABLE'
+              - !Ref "VPCName"
+        - Key: "Environment"
+          Value:
+            !Ref "Environment"
+  PrivateRoute:
+    Type: "AWS::EC2::Route"
+    Description: "Allows connection to/from the internet for the public subnet"
+    DependsOn: IGWAttachmentToVPC
+    Properties:
+      RouteTableId:
+        Ref: PrivateRouteTable
+      # redirect all traffic to igw
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId:
+        Ref: NatGateway
+  PrivateSubnetRouteTableAssociationB:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Description: "Associates route table to public subnet"
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Description: "A nat gateway attached to the public subnet, allows the private subnet to fetch updates from the web"
+    Properties:
+      AllocationId: !GetAtt EIPForNatGateway.AllocationId
+      SubnetId: !Ref PublicSubnetA
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - 'NGW'
+              - !Ref "VPCName"
+        - Key: "Environment"
+          Value: !Ref "Environment"
+  EIPForNatGateway:
+    Description: "Attach this IP address to this VPC."
+    Type: AWS::EC2::EIP
+    DependsOn: IGWAttachmentToVPC
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - 'NGW'
+              - !Ref "VPCName"
+        - Key: "Environment"
+          Value: !Ref "Environment"
+  NoIngressSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "no-ingress-sg"
+      GroupDescription: "Security group with no ingress rule"
+      VpcId: !Ref CustomVPC
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - 'NO INGRESS'
+              - !Ref "VPCName"
+        - Key: "Environment"
+          Value: !Ref "Environment"
+  EIPForBastion:
+    Type: "AWS::EC2::EIP"
+    Description: "Elastic IP used by the instance in the public subnet."
+    Properties:
+      InstanceId: !Ref "BastionEC2Instance"
+      Domain: "vpc"
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - 'BASTION EIP'
+              - !Ref "VPCName"
+        - Key: "Environment"
+          Value: !Ref "Environment"
+  SSHConnectionOnly:
+    Type: 'AWS::EC2::SecurityGroup'
+    DependsOn: "CustomVPC"
+    Properties:
+      GroupDescription: "Security group for SSH, only allows tcp traffic on port 22"
+      VpcId: !Ref 'CustomVPC'
+      SecurityGroupEgress: []
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 22
+          IpProtocol: tcp
+          ToPort: 22
+      Tags:
+        - Key: "Name"
+          Value: !Join
+            - '-'
+            - - "SSH"
+              - !Ref VPCName
+        - Key: Environment
+          Value: !Ref "Environment"
+        - Key: "Application"
+          Value: !Ref "AWS::StackName"
+  WebConnectionOnly:
+    Type: 'AWS::EC2::SecurityGroup'
+    DependsOn: "CustomVPC"
+    Properties:
+      GroupDescription: "Security group for HTTP AND HTTPS"
+      VpcId: !Ref 'CustomVPC'
+      SecurityGroupEgress: []
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+        - CidrIp: 0.0.0.0/0
+          FromPort: 443
+          IpProtocol: tcp
+          ToPort: 443
+      Tags:
+        - Key: "Name"
+          Value: !Join
+            - '-'
+            - - "HTTP/HTTPS"
+              - !Ref VPCName
+        - Key: Environment
+          Value: !Ref "Environment"
+        - Key: "Application"
+          Value: !Ref "AWS::StackName"
+  BastionEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: PublicSubnetA
+    Description: "An instance running on the public subnet to be used, only allowing encrypted traffic via SSH"
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      KeyName: !Ref BastionKeyPair
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref SSHConnectionOnly
+          SubnetId: !Ref PublicSubnetA
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #!/bin/bash -ex
+          sudo yum -y update
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - "BASTION"
+              - !Ref VPCName
+        - Key: "Environment"
+          Value: !Ref Environment
+  IsolatedEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: PrivateSubnetB
+    Description: "An instance running on the private subnet. SSH Accessible through the bastion using the same pem used for the bastion."
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      KeyName: !Ref BastionKeyPair
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref SSHConnectionOnly
+          SubnetId: !Ref PrivateSubnetB
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #!/bin/bash -ex
+          sudo yum -y update
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - "ISOLATED INSTANCE"
+              - !Ref VPCName
+        - Key: "Environment"
+          Value: !Ref Environment
+Outputs:
+  VPCId:
+    Description: "Custom VPC ID"
+    Value:
+      Ref: "CustomVPC"
+  PublicSubnet:
+    Description: "SubnetId of public subnet"
+    Value:
+      Ref: PublicSubnetA
+  PrivateSubnet:
+    Description: "SubnetId of private subnet"
+    Value:
+      Ref: PrivateSubnetB
+  BastionHostPublicIp:
+    Description: "The public IP address of the bastion"
+    Value: !GetAtt
+      - BastionEC2Instance
+      - PublicIp
+  IsolatedInstancePrivateIp:
+    Description: "The Private Ip address of the bastion"
+    Value: !GetAtt
+      - IsolatedEC2Instance
+      - PrivateIp
+
