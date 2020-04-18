@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Metadata:
+  Author: "Giorgio Carta"
+Description: "An example of records sent to Kinesis Firehose to S3"
+Resources:
+  FirehoseToS3:
+    DependsOn: ReadFromKinesisDataStreamRole
+    Type: "AWS::KinesisFirehose::DeliveryStream"
+    Properties:
+      DeliveryStreamName: "DeliveryToS3"
+      DeliveryStreamType: "DirectPut"
+      S3DestinationConfiguration:
+        CloudWatchLoggingOptions:
+          Enabled: "True"
+          LogGroupName: "deliverystream"
+          LogStreamName: "DeliveryToS3"
+        BucketARN: !GetAtt
+          - DestinationS3Bucket
+          - Arn
+        BufferingHints:
+          IntervalInSeconds: 60
+          SizeInMBs: 1
+        CompressionFormat: "GZIP"
+        Prefix: "events/"
+        RoleARN: !GetAtt
+          - ReadFromKinesisDataStreamRole
+          - Arn
+  ReadFromKinesisDataStreamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "firehose.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: ReadFromKinesisAndWriteToS3
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:AbortMultipartUpload"
+                  - "s3:GetBucketLocation"
+                  - "s3:GetObject"
+                  - "s3:ListBucket"
+                  - "s3:ListBucketMultipartUploads"
+                  - "s3:PutObject"
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                  - "logs:DescribeLogStreams"
+                Resource:
+                  - !Join
+                    - ''
+                    - - !GetAtt DestinationS3Bucket.Arn
+                      - '/*'
+                  - !GetAtt DestinationS3Bucket.Arn
+  DestinationS3Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: !Join
+        - '-'
+        - - !Ref AWS::AccountId
+          - 'kinesis-events'
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteContentAfter30Day
+            Prefix: 'events/'
+            Status: 'Enabled'
+            ExpirationInDays: 30
+      Tags:
+        - Key: Name
+          Value: !Join
+            - ' '
+            - - 'KF DESTINATION'
+              - !Ref AWS::StackName
