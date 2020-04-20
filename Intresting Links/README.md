@@ -10,3 +10,6 @@ https://docs.aws.amazon.com/codepipeline/latest/userguide/integrations-action-ty
 
 # intergrate codecommit w codebuild
 https://stackoverflow.com/questions/51346864/how-to-trigger-aws-codebuild-when-creating-pull-request-in-codecommit
+
+# Microservices Patterns
+https://www.jeremydaly.com/serverless-microservice-patterns-for-aws/
