@@ -1,0 +1,177 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Add a private subnet to your default VPC"
+Metadata:
+  Author: Giorgio Carta
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  VPC:
+    Description: The id of the VPC
+    Type: AWS::EC2::VPC::Id
+    AllowedPattern: "^(vpc-)([a-z0-9]{8}|[a-z0-9]{17})$"
+    # EDIT BELOW HERE
+    Default: "vpc-bfbc30da"
+  PublicSubnetId:
+    Description: The id of the Subnet
+    Type: AWS::EC2::Subnet::Id
+    AllowedPattern: "^(subnet-)([a-z0-9]{8}|[a-z0-9]{17})$"
+    # EDIT BELOW HERE
+    Default: "subnet-52e89137"
+  KeyPair:
+    Description: A ssh key pair
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: "Ireland"
+Resources:
+  PrivateSubnet:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      # CidrBlock example:
+      # previous block: 172.31.32.0/20 => 172.31.32.0 -> 172.31.47.255 (4,096 hosts)
+      # next block: 172.31.48.0/20 => 172.31.48.0 -> 172.31.63.255 (4,096 hosts)
+      CidrBlock: "172.31.48.0/20"
+      VpcId: !Ref VPC
+      AvailabilityZone: "eu-west-1a"
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: "DEFAULT PRIVATE SUBNET"
+  S3VPCEndpoint:
+    Type: "AWS::EC2::VPCEndpoint"
+    Properties:
+      RouteTableIds:
+        - !Ref PrivateRouteTable
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.s3
+      VpcEndpointType: "Gateway"
+      VpcId: !Ref VPC
+      PolicyDocument: '{
+                           "Version":"2012-10-17",
+                           "Statement":[{
+                             "Effect":"Allow",
+                             "Principal": "*",
+                             "Action":["s3:*"],
+                             "Resource":["*"]
+                           }]
+                        }'
+  PrivateRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: "PRIVATE ROUTE TABLE"
+  PrivateSubnetRouteTableAssociationSubnet:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Description: "Associates route table to public subnet"
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+  ReadFromS3Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: ReadFromS3
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:*"
+                Resource: "*"
+  SSHConnectionFromVPC:
+    Type: 'AWS::EC2::SecurityGroup'
+    DependsOn: PrivateSubnet
+    Properties:
+      GroupDescription: "Security group for SSH from VPC only"
+      VpcId: !Ref VPC
+      SecurityGroupEgress: []
+      SecurityGroupIngress:
+        - CidrIp: 172.31.0.0/16
+          FromPort: 22
+          IpProtocol: tcp
+          ToPort: 22
+      Tags:
+        - Key: "Name"
+          Value: "LOCAL SSH"
+        - Key: "Application"
+          Value: !Ref "AWS::StackName"
+  SSHConnectionFromEverywhere:
+    Type: 'AWS::EC2::SecurityGroup'
+    DependsOn: PrivateSubnet
+    Properties:
+      GroupDescription: "Security group for SSH from VPC only"
+      VpcId: !Ref VPC
+      SecurityGroupEgress: []
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 22
+          IpProtocol: tcp
+          ToPort: 22
+      Tags:
+        - Key: "Name"
+          Value: "PUBLIC SSH"
+        - Key: "Application"
+          Value: !Ref "AWS::StackName"
+  EC2ReadFromS3InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref ReadFromS3Role
+  PrivateInstanceA:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: PrivateSubnet
+    Description: "An instance running on the private subnet. SSH Accessible through the bastion using the same pem used for the bastion."
+    Properties:
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyPair
+      IamInstanceProfile: !Ref EC2ReadFromS3InstanceProfile
+      InstanceType: t2.micro
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref SSHConnectionFromVPC
+          SubnetId: !Ref PrivateSubnet
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: "PRIVATE INSTANCE"
+  PublicInstanceA:
+    Type: 'AWS::EC2::Instance'
+    Description: "An instance running on a public subnet."
+    Properties:
+      ImageId: !Ref LatestAmiId
+      KeyName: !Ref KeyPair
+      IamInstanceProfile: !Ref EC2ReadFromS3InstanceProfile
+      InstanceType: t2.micro
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref SSHConnectionFromEverywhere
+          SubnetId: !Ref PublicSubnetId
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #! /bin/bash
+          sudo yum -y update
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: "PUBLIC INSTANCE"
+
