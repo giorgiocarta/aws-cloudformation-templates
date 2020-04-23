@@ -13,3 +13,6 @@ https://stackoverflow.com/questions/51346864/how-to-trigger-aws-codebuild-when-c
 
 # Microservices Patterns
 https://www.jeremydaly.com/serverless-microservice-patterns-for-aws/
+
+# Embedded metrics for lambdas
+https://github.com/awslabs/aws-embedded-metrics-python
