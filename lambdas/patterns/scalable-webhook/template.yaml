@@ -1,0 +1,82 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  scalable-webhook
+
+  Sample SAM Template for scalable-webhook example
+
+# More info about Globals: https://github.com/awslabs/serverless-application-model/blob/master/docs/globals.rst
+Globals:
+  Function:
+    Timeout: 3
+
+Resources:
+  HandleApiRequest:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: "Handles API Gateway requests and push a message to a queue"
+      Environment:
+        Variables:
+          SQS_QUEUE: !Ref MySqsQueue
+      CodeUri: movies_api/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      Policies: AmazonSQSFullAccess
+      Events:
+        CreateMovie:
+          Type: Api
+          Properties:
+            Path: /movies
+            Method: post
+        UpdateMovie:
+          Type: Api
+          Properties:
+            Path: /movies/{id}
+            Method: post
+        DeleteMovie:
+          Type: Api
+          Properties:
+            Path: /movies/{id}
+            Method: delete
+  DbProxy:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: "Pop messages from the queue and proxy a database."
+      Environment:
+        Variables:
+          SQS_QUEUE: !Ref MySqsQueue
+      DeadLetterQueue: !Ref DLSqsQueue
+      ReservedConcurrentExecutions: 2
+      CodeUri: movies_db_proxy/
+      Handler: app.lambda_handler
+      Runtime: python3.7
+      Events:
+        MySQSEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt MySqsQueue.Arn
+            BatchSize: 10
+  MySqsQueue:
+    Type: AWS::SQS::Queue
+    Description: "This queue contains CRUD json events to be consumed by the DbProxy Lambda"
+    Properties:
+      QueueName: "MoviesCRUD"
+  DLSqsQueue:
+    Description: "This queue contains CRUD operations that the DBProxy failed to process."
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: "DeadLetterMoviesCRUD"
+
+  #Outputs:
+#  # ServerlessRestApi is an implicit API created out of Events key under Serverless::Function
+#  # Find out more about other implicit resources you can reference within SAM
+#  # https://github.com/awslabs/serverless-application-model/blob/master/docs/internals/generated_resources.rst#api
+#  HelloWorldApi:
+#    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
+#    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/hello/"
+#  HelloWorldFunction:
+#    Description: "Hello World Lambda Function ARN"
+#    Value: !GetAtt HelloWorldFunction.Arn
+#  HelloWorldFunctionIamRole:
+#    Description: "Implicit IAM Role created for Hello World function"
+#    Value: !GetAtt HelloWorldFunctionRole.Arn
