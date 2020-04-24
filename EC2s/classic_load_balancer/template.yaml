@@ -1,0 +1,329 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "test"
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  VPCName:
+    # ALL RESOURCES SHOULD HAVE A TAG WITH THIS STRING
+    Description: "The name of the VPC being created."
+    Type: String
+    Default: "VPC Public and Private with NAT"
+Mappings:
+  SubnetConfig:
+    VPC:
+      # 65536 hosts available
+      CIDR: "10.0.0.0/16"
+    Public:
+      # of which 256 public
+      CIDR: "10.0.10.0/24"
+    Private:
+      # first 256 private
+      CIDR: "10.0.20.0/24"
+Resources:
+  CustomVPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: "10.0.0.0/16"
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Ref VPCName
+  PrivateWebSubnetA:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      CidrBlock: "10.0.1.0/24"
+      VpcId: !Ref CustomVPC
+      AvailabilityZone: "eu-west-1a"
+      MapPublicIpOnLaunch: false
+  PrivateWebSubnetB:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      CidrBlock: "10.0.2.0/24"
+      VpcId: !Ref CustomVPC
+      AvailabilityZone: "eu-west-1b"
+      MapPublicIpOnLaunch: false
+  DMZSubnetA:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      CidrBlock: "10.0.3.0/24"
+      VpcId: !Ref CustomVPC
+      AvailabilityZone: "eu-west-1a"
+      MapPublicIpOnLaunch: false
+  DMZSubnetB:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      CidrBlock: "10.0.4.0/24"
+      VpcId: !Ref CustomVPC
+      AvailabilityZone: "eu-west-1b"
+      MapPublicIpOnLaunch: false
+  InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Description: "IGW used by the public subnet to connect to the internet"
+    Properties:
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - !Ref "VPCName"
+              - "IGW"
+  IGWAttachmentToVPC:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Description: "Attach the IGW to gateway to Public Subnet (A)"
+    Properties:
+      VpcId: !Ref CustomVPC
+      InternetGatewayId: !Ref InternetGateway
+  PublicRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Description: "Custom table to Allow connection to/from the internet for the public subnet"
+    Properties:
+      VpcId:
+        Ref: "CustomVPC"
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - 'PUBLIC ROUTE'
+              - !Ref "VPCName"
+  PublicRoute:
+    Type: "AWS::EC2::Route"
+    Description: "Allows connection to/from the internet for the public DMZ subnet"
+    DependsOn: IGWAttachmentToVPC
+    Properties:
+      RouteTableId:
+        Ref: "PublicRouteTable"
+      # redirect all traffic to igw
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId:
+        Ref: "InternetGateway"
+  PublicSubnetRouteTableAssociationA:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Description: "Associates route table to public subnet"
+    Properties:
+      SubnetId: !Ref DMZSubnetA
+      RouteTableId: !Ref PublicRouteTable
+  PublicSubnetRouteTableAssociationB:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Description: "Associates route table to public subnet"
+    Properties:
+      SubnetId: !Ref DMZSubnetB
+      RouteTableId: !Ref PublicRouteTable
+  PrivateRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref CustomVPC
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - 'PRIVATE ROUTE TABLE'
+              - !Ref "VPCName"
+  PrivateRoute:
+    Type: "AWS::EC2::Route"
+    Description: "Allows connection to/from the internet for the public subnet"
+    DependsOn: IGWAttachmentToVPC
+    Properties:
+      RouteTableId:
+        Ref: PrivateRouteTable
+      # redirect all traffic to igw
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId:
+        Ref: NatGateway
+  PrivateSubnetRouteTableAssociationSubnetA:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Description: "Associates route table to public subnet"
+    Properties:
+      SubnetId: !Ref PrivateWebSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+  PrivateSubnetRouteTableAssociationSubnetB:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Description: "Associates route table to public subnet"
+    Properties:
+      SubnetId: !Ref PrivateWebSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Description: "A nat gateway attached to the public subnet, allows the private subnets to fetch updates from the web"
+    Properties:
+      AllocationId: !GetAtt EIPForNatGateway.AllocationId
+      SubnetId: !Ref DMZSubnetA
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - 'NGW'
+              - !Ref "VPCName"
+  EIPForNatGateway:
+    Description: "Attach this IP address to this VPC."
+    Type: AWS::EC2::EIP
+    DependsOn: IGWAttachmentToVPC
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: !Join
+            - ' '
+            - - 'NGW'
+              - !Ref "VPCName"
+  WebConnectionFromVPC:
+    Type: 'AWS::EC2::SecurityGroup'
+    DependsOn: "CustomVPC"
+    Properties:
+      GroupDescription: "Security group for HTTP AND HTTPS"
+      VpcId: !Ref 'CustomVPC'
+      SecurityGroupEgress: []
+      SecurityGroupIngress:
+        - CidrIp: 10.0.0.0/16
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+        - CidrIp: 10.0.0.0/16
+          FromPort: 443
+          IpProtocol: tcp
+          ToPort: 443
+      Tags:
+        - Key: "Name"
+          Value: !Join
+            - '-'
+            - - "LOCAL HTTP/HTTPS"
+              - !Ref VPCName
+        - Key: "Application"
+          Value: !Ref "AWS::StackName"
+  WebConnectionFromInternet:
+    Type: 'AWS::EC2::SecurityGroup'
+    DependsOn: "CustomVPC"
+    Properties:
+      GroupDescription: "Security group for HTTP AND HTTPS"
+      VpcId: !Ref 'CustomVPC'
+      SecurityGroupEgress: []
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 80
+          IpProtocol: tcp
+          ToPort: 80
+        - CidrIp: 0.0.0.0/0
+          FromPort: 443
+          IpProtocol: tcp
+          ToPort: 443
+      Tags:
+        - Key: "Name"
+          Value: !Join
+            - '-'
+            - - "ALL HTTP/HTTPS"
+              - !Ref VPCName
+        - Key: "Application"
+          Value: !Ref "AWS::StackName"
+  ReadFromS3Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: ReadFromS3
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:Get*"
+                  - "s3:List*"
+                Resource: "*"
+  EC2ReadFromS3InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref ReadFromS3Role
+  WebInstanceA:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: PrivateWebSubnetA
+    Description: "An instance running on the private subnet. SSH Accessible through the bastion using the same pem used for the bastion."
+    Properties:
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref EC2ReadFromS3InstanceProfile
+      InstanceType: t2.micro
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref WebConnectionFromVPC
+          SubnetId: !Ref PrivateWebSubnetA
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #! /bin/bash
+          sudo yum -y update
+          sudo yum install httpd -y
+          aws s3 cp s3://gcdataset/tokyo.zip .
+          unzip tokyo.zip -d /var/www/html/
+          service httpd start
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: "WEB SERVER A"
+  WebInstanceB:
+    Type: 'AWS::EC2::Instance'
+    DependsOn: PrivateWebSubnetB
+    Description: "An instance running on the private subnet. SSH Accessible through the bastion using the same pem used for the bastion."
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      IamInstanceProfile: !Ref EC2ReadFromS3InstanceProfile
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: false
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref WebConnectionFromVPC
+          SubnetId: !Ref PrivateWebSubnetB
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #! /bin/bash
+          sudo yum -y update
+          sudo yum install httpd -y
+          aws s3 cp s3://gcdataset/tokyo.zip .
+          unzip tokyo.zip -d /var/www/html/
+          service httpd start
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: "WEB SERVER B"
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      Instances:
+        - !Ref WebInstanceA
+        - !Ref WebInstanceB
+      Listeners:
+        - InstancePort: 80
+          InstanceProtocol: HTTP
+          LoadBalancerPort: 80
+          Protocol: HTTP
+      LoadBalancerName: "InternetLoadBalancer"
+      Scheme: "internet-facing"
+      SecurityGroups:
+        - !Ref WebConnectionFromInternet
+      Subnets:
+        - !Ref DMZSubnetA
+        - !Ref DMZSubnetB
