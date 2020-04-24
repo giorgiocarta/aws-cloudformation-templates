@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "test"
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+  VPC:
+    Description: The id of the VPC
+    Type: AWS::EC2::VPC::Id
+    AllowedPattern: "^(vpc-)([a-z0-9]{8}|[a-z0-9]{17})$"
+    # EDIT BELOW HERE
+    Default: "vpc-bfbc30da"
+  Subnets:
+    Description: The ids of at least two subnets
+    Type: List<AWS::EC2::Subnet::Id>
+    # EDIT BELOW HERE
+    Default: subnet-e35fe4ba,subnet-ca99f8bd
+Resources:
+  ReadFromS3Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      Policies:
+        - PolicyName: ReadFromS3
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:Get*"
+                  - "s3:List*"
+                Resource: "*"
+  EC2ReadFromS3InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref ReadFromS3Role
+  WebInstanceA:
+    Type: 'AWS::EC2::Instance'
+    Description: "An instance running on the private subnet. SSH Accessible through the bastion using the same pem used for the bastion."
+    Properties:
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref EC2ReadFromS3InstanceProfile
+      InstanceType: t2.micro
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: True
+          DeviceIndex: 0
+          SubnetId: subnet-e35fe4ba
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #! /bin/bash
+          sudo yum -y update
+          sudo yum install httpd -y
+          aws s3 cp s3://gcdataset/tokyo.zip .
+          unzip tokyo.zip -d /var/www/html/
+          service httpd start
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: "WEB SERVER A"
+  WebInstanceB:
+    Type: 'AWS::EC2::Instance'
+    Description: "An instance running on the private subnet. SSH Accessible through the bastion using the same pem used for the bastion."
+    Properties:
+      ImageId: !Ref LatestAmiId
+      IamInstanceProfile: !Ref EC2ReadFromS3InstanceProfile
+      InstanceType: t2.micro
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: True
+          DeviceIndex: 0
+          SubnetId: subnet-ca99f8bd
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #! /bin/bash
+          sudo yum -y update
+          sudo yum install httpd -y
+          aws s3 cp s3://gcdataset/tokyo.zip .
+          unzip tokyo.zip -d /var/www/html/
+          service httpd start
+      Tags:
+        - Key: "Application"
+          Value: !Ref AWS::StackName
+        - Key: "Name"
+          Value: "WEB SERVER B"
+  EC2TargetGroup:
+    Type: "AWS::ElasticLoadBalancingV2::TargetGroup"
+    Properties:
+      HealthCheckEnabled: True
+      HealthCheckIntervalSeconds: 10
+      HealthCheckPath: "/index.html"
+      HealthCheckPort: 80
+      HealthCheckProtocol: "HTTP"
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 5
+      Name: "SAMPLE"
+      Port: 80
+      Protocol: HTTP
+      Targets:
+        - Id: !Ref WebInstanceA
+          Port: 80
+        - Id: !Ref WebInstanceB
+          Port: 80
+      TargetType: "instance"
+      UnhealthyThresholdCount: 5
+      VpcId: !Ref VPC
+  LoadBalancerListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref EC2TargetGroup
+  ApplicationLoadBalancer:
+    Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
+    Properties:
+      IpAddressType: "ipv4"
+      Name: "SAMPLE-APP-LOAD-BALANCER"
+      Scheme: "internet-facing"
+      Subnets:
+        !Ref Subnets
+      Type: "application"
+
+
