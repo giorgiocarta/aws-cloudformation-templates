@@ -1,4 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
+Metadata:
+  Author: "Giorgio Carta"
 Description: "ASG example with notifications"
 Parameters:
   LatestAmiId:
