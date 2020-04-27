@@ -16,3 +16,6 @@ https://www.jeremydaly.com/serverless-microservice-patterns-for-aws/
 
 # Embedded metrics for lambdas
 https://github.com/awslabs/aws-embedded-metrics-python
+
+# Custom resource to ad current date and time
+https://stackoverflow.com/questions/15637947/how-can-i-get-current-date-in-a-cloudformation-script
