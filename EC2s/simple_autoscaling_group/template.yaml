@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "ASG example with notifications"
+Parameters:
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+Resources:
+  DummyServerTemplate:
+    Type: "AWS::AutoScaling::LaunchConfiguration"
+    Description: "A template to generate EC2 instances for my fleet"
+    Properties:
+      ImageId: !Ref LatestAmiId
+      InstanceType: t2.micro
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #! /bin/bash
+          sudo yum -y update
+          sudo yum install httpd -y
+          aws s3 cp s3://gcdataset/tokyo.zip .
+          unzip tokyo.zip -d /var/www/html/
+          service httpd start
+  NotificationSQS:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: "SCALE-OUT-NOTIFICATION"
+  AllowNotificationsFromASGRole:
+    Type: AWS::IAM::Role
+    Description: "Allows EC2 Auto Scaling to publish to SNS and SQS notification targets in your account."
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "autoscaling.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: /
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/service-role/AutoScalingNotificationAccessRole"
+  ScaleOutTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: "ASG Scale Out Topic"
+      TopicName: "ScaleOutTopic"
+  ScaleOutEmailNotification:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: "giorgiocarta@gmail.com"
+      Protocol: "email"
+      TopicArn: !Ref 'ScaleOutTopic'
+  AutoScalingGroup:
+    Type: "AWS::AutoScaling::AutoScalingGroup"
+    Properties:
+      MaxSize: 3
+      MinSize: 1
+      LaunchConfigurationName: !Ref DummyServerTemplate
+      AvailabilityZones:
+        Fn::GetAZs:
+          Ref: "AWS::Region"
+      HealthCheckType: EC2
+      MaxInstanceLifetime: 604800
+      LifecycleHookSpecificationList:
+        - DefaultResult: "ABANDON"
+          LifecycleHookName: "LaunchedInstance"
+          LifecycleTransition: "autoscaling:EC2_INSTANCE_TERMINATING"
+          NotificationTargetARN:
+            Fn::GetAtt:  [ NotificationSQS, Arn]
+          RoleARN:
+            Fn::GetAtt: [AllowNotificationsFromASGRole, Arn]
+      NotificationConfigurations:
+        - TopicARN: !Ref ScaleOutTopic
+          NotificationTypes:
+            - autoscaling:EC2_INSTANCE_LAUNCH
+
+
+
+
+
+
+
