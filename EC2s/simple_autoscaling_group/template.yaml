@@ -56,6 +56,7 @@ Resources:
     Properties:
       MaxSize: 3
       MinSize: 1
+      DesiredCapacity: 2
       LaunchConfigurationName: !Ref DummyServerTemplate
       AvailabilityZones:
         Fn::GetAZs:
